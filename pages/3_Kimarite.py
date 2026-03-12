@@ -91,10 +91,25 @@ if not match_data:
     st.warning("No match data found.")
     st.stop()
 
-matches = match_data.get("matches", match_data) if isinstance(match_data, dict) else match_data
+# Handle all possible API response shapes
+if isinstance(match_data, dict):
+    matches = (
+        match_data.get("matches")
+        or match_data.get("records")
+        or match_data.get("data")
+        or []
+    )
+elif isinstance(match_data, list):
+    matches = match_data
+else:
+    matches = []
+
+if not matches:
+    st.info(f"No match history found for {selected_name}.")
+    st.stop()
 
 # Filter to wins only for kimarite analysis
-wins = [m for m in matches if m.get("winnerId") == rikishi_id]
+wins = [m for m in matches if isinstance(m, dict) and m.get("winnerId") == rikishi_id]
 
 if not wins:
     st.info(f"No recorded wins found for {selected_name}.")
