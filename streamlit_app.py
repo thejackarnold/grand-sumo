@@ -190,7 +190,14 @@ if selected_name:
         if rikishi.get("birthDate"):
             st.markdown(f"**Born:** {rikishi['birthDate'][:10]}")
         if rikishi.get("debut"):
-            st.markdown(f"**Debut:** {rikishi['debut']}")
+            debut_raw = str(rikishi["debut"])
+            if len(debut_raw) == 6 and debut_raw.isdigit():
+                import calendar
+                debut_month = calendar.month_name[int(debut_raw[4:])]
+                debut_formatted = f"{debut_month} {debut_raw[:4]}"
+            else:
+                debut_formatted = debut_raw
+            st.markdown(f"**Debut:** {debut_formatted}")
         if rikishi.get("nationality"):
             st.markdown(f"**Nationality:** {rikishi['nationality']}")
 
@@ -224,12 +231,16 @@ if selected_name:
         stats = get_rikishi_stats(rikishi_id)
 
     if stats:
-        basho_count = stats.get("basho", 0)
-        wins = stats.get("wins", 0)
-        losses = stats.get("losses", 0)
-        absences = stats.get("absences", 0)
+        # Handle various field name formats the API might return
+        basho_count = stats.get("basho") or stats.get("bashoCount") or stats.get("tournaments") or 0
+        wins = stats.get("wins") or stats.get("totalWins") or 0
+        losses = stats.get("losses") or stats.get("totalLosses") or 0
+        absences = stats.get("absences") or stats.get("totalAbsences") or 0
         total_bouts = wins + losses
         win_pct = round((wins / total_bouts) * 100, 1) if total_bouts > 0 else 0.0
+
+        with st.expander("🔍 Raw API response (debug)"):
+            st.json(stats)
 
         s1, s2, s3, s4 = st.columns(4)
         s1.metric("Tournaments", basho_count)
