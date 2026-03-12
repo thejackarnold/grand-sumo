@@ -22,6 +22,68 @@ def get_rikishi_stats(rikishi_id):
     return r.json() if r.status_code == 200 else None
 
 
+@st.cache_data(ttl=86400)
+def get_wikipedia_photo(name):
+    """Fetch the main image for a Wikipedia article by wrestler name.
+    Tries the ring name first, then falls back to a sumo-specific search.
+    Returns an image URL string or None."""
+    def fetch_image_for_title(title):
+        url = "https://en.wikipedia.org/w/api.php"
+        params = {
+            "action": "query",
+            "titles": title,
+            "prop": "pageimages",
+            "pithumbsize": 400,
+            "format": "json",
+            "redirects": 1,
+        }
+        try:
+            r = requests.get(url, params=params, timeout=5)
+            if r.status_code != 200:
+                return None
+            pages = r.json().get("query", {}).get("pages", {})
+            for page in pages.values():
+                thumb = page.get("thumbnail", {})
+                if thumb.get("source"):
+                    return thumb["source"]
+        except Exception:
+            return None
+        return None
+
+    # Try exact name first
+    img = fetch_image_for_title(name)
+    if img:
+        return img
+
+    # Try with "sumo wrestler" appended to disambiguate
+    img = fetch_image_for_title(f"{name} (sumo wrestler)")
+    if img:
+        return img
+
+    # Try Wikipedia search API to find the best matching article
+    try:
+        search_url = "https://en.wikipedia.org/w/api.php"
+        params = {
+            "action": "query",
+            "list": "search",
+            "srsearch": f"{name} sumo",
+            "srlimit": 1,
+            "format": "json",
+        }
+        r = requests.get(search_url, params=params, timeout=5)
+        if r.status_code == 200:
+            results = r.json().get("query", {}).get("search", [])
+            if results:
+                title = results[0]["title"]
+                img = fetch_image_for_title(title)
+                if img:
+                    return img
+    except Exception:
+        pass
+
+    return None
+
+
 def get_rank_display(rank):
     if not rank:
         return "Unknown"
@@ -88,7 +150,8 @@ if selected_name:
     st.divider()
 
     # ── Profile ───────────────────────────────────────────────────────────────
-    col1, col2 = st.columns([2, 1])
+    col1, col2, col3 = st.columns([3, 2, 2])
+
     with col1:
         st.subheader(selected_name)
         if rikishi.get("shikonaJp"):
@@ -108,6 +171,19 @@ if selected_name:
             st.metric("Height", f"{rikishi['heightCm']} cm")
         if rikishi.get("weightKg"):
             st.metric("Weight", f"{rikishi['weightKg']} kg")
+
+    with col3:
+        with st.spinner("Loading photo..."):
+            photo_url = get_wikipedia_photo(selected_name)
+        if photo_url:
+            st.image(photo_url, width=200)
+        else:
+            st.markdown(
+                "<div style='width:200px;height:280px;background:#f0f0f0;border-radius:8px;"
+                "display:flex;align-items:center;justify-content:center;"
+                "color:#a0aec0;font-size:3rem;'>🏯</div>",
+                unsafe_allow_html=True
+            )
 
     # ── Career stats ──────────────────────────────────────────────────────────
     st.divider()
