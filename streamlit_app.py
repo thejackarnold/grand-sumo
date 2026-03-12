@@ -24,62 +24,90 @@ def get_rikishi_stats(rikishi_id):
 
 @st.cache_data(ttl=86400)
 def get_wikipedia_photo(name):
-    """Fetch the main image for a Wikipedia article by wrestler name.
-    Tries the ring name first, then falls back to a sumo-specific search.
+    """Fetch a rikishi photo from Wikipedia.
+    Uses the search API to find the best matching article, then pulls the thumbnail.
     Returns an image URL string or None."""
+
     def fetch_image_for_title(title):
-        url = "https://en.wikipedia.org/w/api.php"
-        params = {
-            "action": "query",
-            "titles": title,
-            "prop": "pageimages",
-            "pithumbsize": 400,
-            "format": "json",
-            "redirects": 1,
-        }
         try:
-            r = requests.get(url, params=params, timeout=5)
+            r = requests.get(
+                "https://en.wikipedia.org/w/api.php",
+                params={
+                    "action": "query",
+                    "titles": title,
+                    "prop": "pageimages",
+                    "pithumbsize": 400,
+                    "format": "json",
+                    "redirects": 1,
+                },
+                timeout=6,
+            )
             if r.status_code != 200:
                 return None
             pages = r.json().get("query", {}).get("pages", {})
             for page in pages.values():
+                # -1 means page not found
+                if page.get("pageid") == -1:
+                    return None
                 thumb = page.get("thumbnail", {})
                 if thumb.get("source"):
                     return thumb["source"]
         except Exception:
-            return None
+            pass
         return None
 
-    # Try exact name first
+    def search_and_fetch(query, require_sumo=True):
+        """Search Wikipedia, optionally filter to sumo-related articles."""
+        try:
+            r = requests.get(
+                "https://en.wikipedia.org/w/api.php",
+                params={
+                    "action": "query",
+                    "list": "search",
+                    "srsearch": query,
+                    "srlimit": 5,
+                    "format": "json",
+                },
+                timeout=6,
+            )
+            if r.status_code != 200:
+                return None
+            results = r.json().get("query", {}).get("search", [])
+            for result in results:
+                title = result["title"]
+                snippet = result.get("snippet", "").lower()
+                # Filter to sumo-related results
+                if require_sumo and not any(
+                    w in snippet or w in title.lower()
+                    for w in ["sumo", "rikishi", "wrestler", "basho", "yokozuna", "ozeki"]
+                ):
+                    continue
+                img = fetch_image_for_title(title)
+                if img:
+                    return img
+        except Exception:
+            pass
+        return None
+
+    # 1. Try exact name
     img = fetch_image_for_title(name)
     if img:
         return img
 
-    # Try with "sumo wrestler" appended to disambiguate
+    # 2. Try "{name} (sumo wrestler)" disambiguation
     img = fetch_image_for_title(f"{name} (sumo wrestler)")
     if img:
         return img
 
-    # Try Wikipedia search API to find the best matching article
-    try:
-        search_url = "https://en.wikipedia.org/w/api.php"
-        params = {
-            "action": "query",
-            "list": "search",
-            "srsearch": f"{name} sumo",
-            "srlimit": 1,
-            "format": "json",
-        }
-        r = requests.get(search_url, params=params, timeout=5)
-        if r.status_code == 200:
-            results = r.json().get("query", {}).get("search", [])
-            if results:
-                title = results[0]["title"]
-                img = fetch_image_for_title(title)
-                if img:
-                    return img
-    except Exception:
-        pass
+    # 3. Search Wikipedia for "{name} sumo wrestler"
+    img = search_and_fetch(f"{name} sumo wrestler", require_sumo=False)
+    if img:
+        return img
+
+    # 4. Broader search: just name + sumo
+    img = search_and_fetch(f"{name} sumo", require_sumo=False)
+    if img:
+        return img
 
     return None
 
@@ -184,6 +212,9 @@ if selected_name:
                 "color:#a0aec0;font-size:3rem;'>🏯</div>",
                 unsafe_allow_html=True
             )
+            if st.button("🔄 Retry photo", key="retry_photo"):
+                st.cache_data.clear()
+                st.rerun()
 
     # ── Career stats ──────────────────────────────────────────────────────────
     st.divider()
