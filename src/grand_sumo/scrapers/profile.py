@@ -170,11 +170,16 @@ def _fetch(url: str, binary: bool = False, referer: str = SEARCH_URL, timeout: i
 
 def parse_roster(html: str) -> list[tuple[str, str]]:
     """Return list of (profile_id, ring_name) for all Makuuchi rikishi."""
-    pattern = r'\[([^\]]+)\]\(https?://sumo\.or\.jp/EnSumoDataRikishi/profile/(\d+)\)'
+    # The search page returns HTML; match <a href="...profile/ID...">Name</a>
+    pattern = (
+        r'<a[^>]+href=["\'](?:https?://sumo\.or\.jp)?'
+        r'/EnSumoDataRikishi/profile/(\d+)/?["\'][^>]*>'
+        r'([^<]+)</a>'
+    )
     seen: dict[str, str] = {}
-    for m in re.finditer(pattern, html):
-        name, pid = m.group(1).strip(), m.group(2)
-        if pid not in seen:
+    for m in re.finditer(pattern, html, re.IGNORECASE):
+        pid, name = m.group(1), m.group(2).strip()
+        if pid not in seen and name:
             seen[pid] = name
     return [(pid, name) for pid, name in seen.items()]
 
