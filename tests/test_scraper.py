@@ -1,12 +1,11 @@
 """Tests for the sumo.or.jp scraper."""
-import re
 from unittest.mock import patch
 
 from grand_sumo.scrapers.profile import (
     parse_roster,
     parse_profile,
     render_note,
-    _table_value,
+    _html_value,
 )
 
 ROSTER_HTML = """
@@ -19,69 +18,68 @@ ROSTER_HTML = """
 </html>
 """
 
-PROFILE_TEXT = """
-| **Name** | Terunofuji |
-| **Ring Name** | Terunofuji |
-| **Current Rank** | Yokozuna East |
-| **Birthday** | November 29, 1991 |
-| **Birthplace** | Ulaanbaatar, Mongolia |
-| **Height** | 192 cm |
-| **Weight** | 165 kg |
-| **Signature Maneuver** | Yorikiri |
+PROFILE_HTML = """
+<table>
+<tr><th>Name</th><td>Terunofuji</td></tr>
+<tr><th>Ring Name</th><td>Terunofuji</td></tr>
+<tr><th>Current Rank</th><td>Yokozuna East</td></tr>
+<tr><th>Birthday</th><td>November 29, 1991</td></tr>
+<tr><th>Birthplace</th><td>Ulaanbaatar, Mongolia</td></tr>
+<tr><th>Height</th><td>192 cm</td></tr>
+<tr><th>Weight</th><td>165 kg</td></tr>
+<tr><th>Signature Maneuver</th><td>Yorikiri</td></tr>
+</table>
 
-[Some Stable](/EnSumoDataSumoBeya/123/)
+<a href="/EnSumoDataSumoBeya/123/">Some Stable</a>
 
-Career Record:
-700-200-50
+<img src="/img/sumo_data/rikishi/270x474/1234.jpg">
 
-Makuuchi Record:
-400-100-30
+<div class="prizes">
+<img src="/en/img/common/prize01.gif" alt="champ"><dd>6</dd>
+<img src="/en/img/common/prize02.gif" alt="juryo"><dd>2</dd>
+<img src="/en/img/common/prize10.gif" alt="kinboshi"><dd>3</dd>
+</div>
 
-prize01.gif)
-6
+<div class="records">
+<dt>Career Record:</dt><dd>700-200-50</dd>
+<dt>Makuuchi Record:</dt><dd>400-100-30</dd>
+<dt>yorikiri</dt><dd>45%</dd>
+<dt>oshidashi</dt><dd>30%</dd>
+</div>
 
-prize02.gif)
-2
+<div class="rankings">
+<dt>Yokozuna</dt><dd class="year"></dd><dd class="month">January</dd>
+</div>
 
-prize10.gif)
-3
+<div class="milestones">
+<dt>Debut</dt><dd>2005</dd>
+<dt>Juryo Debut</dt><dd>2007</dd>
+<dt>Makuuchi Debut</dt><dd>2009</dd>
+<dt>Sanyaku Debut</dt><dd>2011</dd>
+<dt>Highest Rank</dt><dd>Yokozuna</dd>
+</div>
 
-1.
+<div class="tournaments">
+<span style="color:#ffffff;">2023&nbsp;January</span><br>
+<span style="color:#ffffff;">East&nbsp;Yokozuna</span><br>
+<span style="color:#ffffff;">Terunofuji</span><br>
+<span style="color:#ffffff;">14-1</span><br>
+<span style="color:#ffffff;">Makuuchi Division Champion</span>
+<br>
+<span style="color:#ffffff;">2023&nbsp;March</span><br>
+<span style="color:#ffffff;">East&nbsp;Yokozuna</span><br>
+<span style="color:#ffffff;">Terunofuji</span><br>
+<span style="color:#ffffff;">12-3</span>
+</div>
 
-Yorikiri
-45%
-
-2.
-
-Oshidashi
-30%
-
-Rankings for the Past Year
-Yokozuna
-January
-
-Debut
-2005
-
-Juryo Debut
-2007
-
-Makuuchi Debut
-2009
-
-Sanyaku Debut
-2011
-
-Highest Rank
-Yokozuna
-
-- 2023 January East Yokozuna 14-1 Makuuchi Division Champion)
-- 2023 March East Yokozuna 12-3
-
-
-###  Stablemates
-|  ![](img)  SomeName  [Stablemate](/EnSumoDataRikishi/profile/123/)  |
-|  ![](img)  OtherName  [OtherGuy](/EnSumoDataRikishi/profile/456/)  |
+<div class="stablemates">
+Rikishi from Mongolia Prefecture
+East Maegashira #1<br>
+<a href="/EnSumoDataRikishi/profile/123/"><p>Stablemate</p></a>
+West Komusubi<br>
+<a href="/EnSumoDataRikishi/profile/456/"><p>OtherGuy</p></a>
+Find Another Rikishi
+</div>
 """
 
 
@@ -98,18 +96,22 @@ class TestParseRoster:
         assert result == []
 
 
-class TestTableValue:
+class TestHtmlValue:
     def test_basic(self):
-        text = "| **Name** | Test Value |"
-        assert _table_value(text, "Name") == "Test Value"
+        text = "<th>Name</th><td>Test Value</td>"
+        assert _html_value(text, "Name") == "Test Value"
 
     def test_not_found(self):
-        assert _table_value("| Foo | Bar |", "Missing") == ""
+        assert _html_value("<th>Foo</th><td>Bar</td>", "Missing") == ""
+
+    def test_with_anchor(self):
+        text = '<th>Stable</th><td><a href="/beya/">Ajigawa</a></td>'
+        assert _html_value(text, "Stable") == "Ajigawa"
 
 
 class TestParseProfile:
     def test_basic_fields(self):
-        d = parse_profile(PROFILE_TEXT, "Terunofuji")
+        d = parse_profile(PROFILE_HTML, "Terunofuji")
         assert d["given_name"] == "Terunofuji"
         assert d["current_rank"] == "Yokozuna East"
         assert d["height"] == "192"
@@ -118,40 +120,40 @@ class TestParseProfile:
         assert d["career_losses"] == "200"
 
     def test_with_stable(self):
-        d = parse_profile(PROFILE_TEXT, "Terunofuji")
+        d = parse_profile(PROFILE_HTML, "Terunofuji")
         assert d["stable"] == "Some Stable"
         assert d["stable_tag"] == "some-stable"
 
     def test_techniques(self):
-        d = parse_profile(PROFILE_TEXT, "Terunofuji")
+        d = parse_profile(PROFILE_HTML, "Terunofuji")
         assert len(d["techniques"]) == 2
-        assert d["techniques"][0] == ("Yorikiri", "45")
-        assert d["techniques"][1] == ("Oshidashi", "30")
+        assert d["techniques"][0] == ("yorikiri", "45")
+        assert d["techniques"][1] == ("oshidashi", "30")
 
     def test_recent_rankings(self):
-        d = parse_profile(PROFILE_TEXT, "Terunofuji")
+        d = parse_profile(PROFILE_HTML, "Terunofuji")
         assert len(d["recent_rankings"]) >= 1
         assert ("Yokozuna", "January") in d["recent_rankings"]
 
     def test_career_milestones(self):
-        d = parse_profile(PROFILE_TEXT, "Terunofuji")
+        d = parse_profile(PROFILE_HTML, "Terunofuji")
         assert d["debut"] == "2005"
         assert d["highest_rank"] == "Yokozuna"
 
     def test_tournament_rows(self):
-        d = parse_profile(PROFILE_TEXT, "Terunofuji")
+        d = parse_profile(PROFILE_HTML, "Terunofuji")
         assert len(d["tournament_rows"]) >= 2
         assert d["tournament_rows"][0]["wins"] == "14"
-        assert d["tournament_rows"][0]["notes"] == "Makuuchi Division Champion)"
+        assert d["tournament_rows"][0]["notes"] == "Makuuchi Division Champion"
 
     def test_prizes(self):
-        d = parse_profile(PROFILE_TEXT, "Terunofuji")
+        d = parse_profile(PROFILE_HTML, "Terunofuji")
         assert d["champ_makuuchi"] == "6"
         assert d["champ_juryo"] == "2"
         assert d["kinboshi"] == "3"
 
     def test_image_url(self):
-        text = 'src="/img/sumo_data/rikishi/270x474/1234.jpg"'
+        text = '<img src="/img/sumo_data/rikishi/270x474/1234.jpg">'
         d = parse_profile(text, "Test")
         assert d["image_url"] == "https://sumo.or.jp/img/sumo_data/rikishi/270x474/1234.jpg"
 

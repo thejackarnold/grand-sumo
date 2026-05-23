@@ -188,13 +188,21 @@ def parse_roster(html: str) -> list[tuple[str, str]]:
 # Profile parsing
 # ---------------------------------------------------------------------------
 
-def _table_value(text: str, label: str) -> str:
-    """Extract the value cell from a markdown table row matching label."""
+def _html_value(text: str, label: str) -> str:
+    """Extract the value cell from an HTML table row matching label."""
     m = re.search(
-        r'\|\s*\*?\*?' + re.escape(label) + r'\*?\*?\s*\|([^|\n]+)',
+        r'<th>\s*' + re.escape(label) + r'\s*</th>\s*<td>(?:<a[^>]*>)?([^<]+)',
         text, re.IGNORECASE
     )
     return m.group(1).strip() if m else ""
+
+
+def _parse_records(text: str) -> tuple[str, str, str]:
+    """Parse Career Record or Makuuchi Records from <dt>/<dd> tags."""
+    m = re.search(r'<dt>Career Record:</dt>\s*<dd>(\d+)-(\d+)-(\d+)</dd>', text)
+    if m:
+        return m.group(1), m.group(2), m.group(3)
+    return "?", "?", "?"
 
 
 def parse_profile(text: str, ring_name: str) -> dict:
@@ -211,14 +219,15 @@ def parse_profile(text: str, ring_name: str) -> dict:
         ("Weight",             "weight"),
         ("Signature Maneuver", "signature_moves"),
     ]:
-        d[key] = _table_value(text, label)
+        d[key] = _html_value(text, label)
 
-    # Strip units from height/weight
     d["height"] = re.sub(r"[^\d.]", "", d.get("height", ""))
     d["weight"] = re.sub(r"[^\d.]", "", d.get("weight", ""))
 
-    # Stable
-    stable_m = re.search(r'\[([^\]]+)\]\([^)]*EnSumoDataSumoBeya[^)]+\)', text)
+    # Stable (inside <a> tag within <td>)
+    stable_m = re.search(
+        r'<a\s+href="[^"]*EnSumoDataSumoBeya[^"]*">([^<]+)</a>', text
+    )
     d["stable"] = stable_m.group(1).strip() if stable_m else ""
     d["stable_tag"] = re.sub(r'[^a-z0-9]+', '-', d["stable"].lower()).strip('-')
 
@@ -229,13 +238,13 @@ def parse_profile(text: str, ring_name: str) -> dict:
     )
 
     # ---- Career & Makuuchi records -----------------------------------------
-    cr_m = re.search(r'Career Record:\s*\n([\d]+)-([\d]+)-([\d]+)', text)
+    cr_m = re.search(r'<dt>Career Record:</dt>\s*<dd>(\d+)-(\d+)-(\d+)</dd>', text)
     if cr_m:
         d["career_wins"], d["career_losses"], d["career_absences"] = cr_m.groups()
     else:
         d["career_wins"] = d["career_losses"] = d["career_absences"] = "?"
 
-    mk_m = re.search(r'Makuuchi Records?:\s*\n([\d]+)-([\d]+)-([\d]+)', text)
+    mk_m = re.search(r'<dt>Makuuchi Records?:</dt>\s*<dd>(\d+)-(\d+)-(\d+)</dd>', text)
     if mk_m:
         d["makuuchi_wins"], d["makuuchi_losses"], d["makuuchi_absences"] = mk_m.groups()
     else:
@@ -255,28 +264,23 @@ def parse_profile(text: str, ring_name: str) -> dict:
         ("kinboshi",              "prize10"),
     ]
     for key, prize_file in prize_map:
-        m = re.search(re.escape(prize_file) + r'\.gif\)[^\n]*\n(\d+)', text)
+        m = re.search(
+            re.escape(prize_file) + r'\.gif"[^>]*>.*?<dd>(\d+)</dd>', text, re.DOTALL
+        )
         d[key] = m.group(1) if m else "0"
 
     # ---- Winning techniques ------------------------------------------------
-    tech_matches = re.findall(r'\d+\.\n\n([^\n]+)\n(\d+)%', text)
-    d["techniques"] = [(t.strip(), p.strip()) for t, p in tech_matches[:4]
-                       if t.strip().lower() != "etc"]
+    tech_matches = re.findall(r'<dt>([a-z-]+)</dt>\s*<dd>(\d+)%</dd>', text)
+    d["techniques"] = [(t, p) for t, p in tech_matches[:4] if t.lower() != "etc"]
 
     # ---- Recent rankings (past year) ---------------------------------------
-    rankings_section = re.search(
-        r'Rankings for the Past Year(.*?)(?:Debut\s*\n|Stablemates|$)',
-        text, re.DOTALL
-    )
     recent_rankings = []
-    if rankings_section:
-        rr_text = rankings_section.group(1)
-        rr_matches = re.findall(
-            r'\n((?:Yokozuna|Ozeki|Sekiwake|Komusubi|Maegashira[^\n]*))\n'
-            r'(January|March|May|July|September|November)\n',
-            rr_text
-        )
-        recent_rankings = [(rank.strip(), month.strip()) for rank, month in rr_matches[:6]]
+    rr_matches = re.findall(
+        r'<dt>([^<]+)</dt>\s*<dd class="year"></dd>\s*<dd class="month">(\w+)</dd>',
+        text
+    )
+    for rank_raw, month in rr_matches[:6]:
+        recent_rankings.append((rank_raw.strip(), month.strip()))
     d["recent_rankings"] = recent_rankings
 
     # ---- Career milestones -------------------------------------------------
@@ -287,34 +291,43 @@ def parse_profile(text: str, ring_name: str) -> dict:
         ("Sanyaku Debut",   "sanyaku_debut"),
         ("Highest Rank",    "highest_rank"),
     ]:
-        m = re.search(r'\b' + re.escape(label) + r'\s*\n([^\n]+)', text)
-        val = m.group(1).strip() if m else ""
-        d[key] = val if val and "|" not in val else ""
+        m = re.search(
+            r'<dt>\s*' + re.escape(label) + r'\s*</dt>\s*<dd>([^<]+)</dd>', text
+        )
+        d[key] = m.group(1).strip() if m else ""
 
     # ---- Tournament results ------------------------------------------------
     MONTHS = "January|March|May|July|September|November"
     tourney_rows = []
+    SEP = r'(?:\s|\u00a0|&nbsp;)+'
     for m in re.finditer(
-        r'^-\s+(20\d\d)\s+(' + MONTHS + r')\s+'
-        r'((?:East|West)\s+\S+(?:\s+#\d+)?)\s+'
-        r'[^\d\n]*?'
-        r'(\d+)-(\d+)(?:-(\d+))?'
-        r'([^\n]*)',
-        text, re.MULTILINE
+        r'<span[^>]*>\s*(\d{4})' + SEP + r'(' + MONTHS + r')\s*</span>\s*<br>\s*'
+        r'<span[^>]*>\s*(East|West)' + SEP + r'(.+?)\s*</span>\s*<br>\s*'
+        r'<span[^>]*>\s*.*?\s*</span>\s*<br>\s*'
+        r'<span[^>]*>\s*(\d+-\d+(?:-\d+)?)\s*</span>'
+        r'(?:\s*<br>\s*<span[^>]*>\s*(.*?)\s*</span>)?',
+        text, re.DOTALL
     ):
-        year, month, rank_raw = m.group(1), m.group(2), m.group(3)
-        wins, losses, absences = m.group(4), m.group(5), m.group(6) or "0"
-        rest = m.group(7).strip()
+        year, month = m.group(1), m.group(2)
+        rank_raw = f"{m.group(3)} {m.group(4).strip()}"
+        record = m.group(5)
+        parts = record.split("-")
+        if len(parts) == 3:
+            wins, losses, absences = parts
+        else:
+            wins, losses = parts
+            absences = "0"
+        rest = m.group(6).strip() if m.group(6) else ""
 
         prize_m = re.search(
-            r'((?:Makuuchi Division Champion|Shukun-sho|Kanto-sho|Gino-sho)[^)]*\))',
+            r'(Makuuchi Division Champion|Shukun-sho|Kanto-sho|Gino-sho)',
             rest
         )
         notes = prize_m.group(1) if prize_m else ""
 
         tourney_rows.append({
             "basho":    f"{year} {month}",
-            "rank":     rank_raw.strip(),
+            "rank":     rank_raw,
             "wins":     wins,
             "losses":   losses,
             "absences": absences,
@@ -324,18 +337,18 @@ def parse_profile(text: str, ring_name: str) -> dict:
 
     # ---- Stablemates -------------------------------------------------------
     stablemates = []
-    sm_section = re.search(r'### Stablemates\s*\n(.*?)(?:###|\Z)', text, re.DOTALL)
+    sm_section = re.search(
+        r'Rikishi from \w+ Prefecture(.*?)(?:Find Another Rikishi|\Z)',
+        text, re.DOTALL
+    )
     if sm_section:
         for sm in re.finditer(
-            r'\|\s*!\[.*?\]\([^)]+\)'
-            r'(.*?)'
-            r'\[([^\]]+)\]'
-            r'\([^)]+profile/\d+[^)]*\)'
-            r'\s*\|',
-            sm_section.group(1)
+            r'(East|West)\s+([^<]+)<br>.*?'
+            r'href="/EnSumoDataRikishi/profile/\d+/">\s*<p[^>]*>\s*(\w+(?:\s+\w+)?)\s*</p>',
+            sm_section.group(1), re.DOTALL
         ):
-            rank_text = re.sub(r'\s+', ' ', sm.group(1)).strip()
-            name = sm.group(2).strip()
+            rank_text = f"{sm.group(1)} {sm.group(2).strip()}"
+            name = sm.group(3).strip()
             if name and name != ring_name:
                 stablemates.append((name, rank_text))
     d["stablemates"] = stablemates[:6]
