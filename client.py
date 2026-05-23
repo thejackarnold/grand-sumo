@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -133,7 +134,7 @@ class SumoClient:
                 data = response.json()
                 if "error" in data:
                     raise ValueError(f"API Error: {data['error']}")
-            except (KeyError, TypeError):
+            except (KeyError, TypeError, json.JSONDecodeError):
                 # If JSON decode fails or doesn't have error key, fall through to raise_for_status
                 pass
 
@@ -390,7 +391,7 @@ class SumoClient:
         # Convert matches to use the unified Match model
         if "torikumi" in data:
             data["torikumi"] = [
-                Match.from_torikumi(match) for match in data["torikumi"]
+                Match.from_torikumi({**match, "division": division}) for match in data["torikumi"]
             ]
 
         # Handle both 'bashoId' and 'date' fields in the response
