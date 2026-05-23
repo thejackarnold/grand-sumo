@@ -5,7 +5,7 @@ from datetime import datetime
 from client import SumoSyncClient
 
 # --- Configuration ---
-VAULT_PATH = "C:\\Users\\jacka\\OneDrive\\Documents\\repos\\grand_sumo\\data"
+VAULT_PATH = os.environ.get("SUMO_VAULT_PATH", "data")
 
 # ---------------------------------------------------------------------------
 # Helper Utilities
