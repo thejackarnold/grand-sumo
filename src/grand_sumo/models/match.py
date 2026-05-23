@@ -103,7 +103,7 @@ class Match(BaseModel):
         """Create a Match instance from banzuke data."""
         return cls(
             bashoId=data.get("bashoId", ""),  # This will be set by the client
-            day=1,  # Default to day 1 since banzuke records don't include day
+            day=0,  # Banzuke records don't include day
             result=data["result"],
             opponentID=data["opponentID"],
             opponentShikonaEn=data["opponentShikonaEn"],

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List, Literal, Optional
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 
 # ---------------------------------------------------------------------------
@@ -44,10 +44,7 @@ class KimariteResponse(BaseModel):
 class KimariteMatch(BaseModel):
     """Model for a single kimarite match."""
 
-    model_config = ConfigDict(
-        populate_by_name=True,
-        json_encoders={datetime: lambda dt: dt.astimezone(ZoneInfo("UTC")).isoformat()},
-    )
+    model_config = ConfigDict(populate_by_name=True)
 
     id: str = Field(..., description="Unique identifier for the match")
     basho_id: str = Field(..., alias="bashoId", description="The ID of the basho")
@@ -85,14 +82,15 @@ class KimariteMatch(BaseModel):
         None, alias="updatedAt", description="When the record was last updated"
     )
 
+    @field_serializer("created_at", "updated_at")
+    def _serialize_dt(self, v: datetime) -> str:
+        return v.astimezone(ZoneInfo("UTC")).isoformat()
+
 
 class KimariteMatchesResponse(BaseModel):
     """Model for the kimarite matches response."""
 
-    model_config = ConfigDict(
-        populate_by_name=True,
-        json_encoders={datetime: lambda dt: dt.astimezone(ZoneInfo("UTC")).isoformat()},
-    )
+    model_config = ConfigDict(populate_by_name=True)
 
     limit: int = Field(
         ..., description="The maximum number of records returned", ge=1, le=1000

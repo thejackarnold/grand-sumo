@@ -297,7 +297,7 @@ def parse_profile(text: str, ring_name: str) -> dict:
     for m in re.finditer(
         r'^-\s+(20\d\d)\s+(' + MONTHS + r')\s+'
         r'((?:East|West)\s+\S+(?:\s+#\d+)?)\s+'
-        r'[^\d\n]+?'
+        r'[^\d\n]*?'
         r'(\d+)-(\d+)(?:-(\d+))?'
         r'([^\n]*)',
         text, re.MULTILINE

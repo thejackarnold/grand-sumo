@@ -535,14 +535,14 @@ class SumoClient:
             ValueError: If parameters are invalid or neither basho_id nor rikishi_id is provided
         """
         # Validate parameters
-        if not basho_id and not rikishi_id:
-            raise ValueError("Either basho_id or rikishi_id must be provided")
+        if rikishi_id is not None and rikishi_id <= 0:
+            raise ValueError("Rikishi ID must be positive")
 
         if basho_id and not (basho_id.isdigit() and len(basho_id) == 6):
             raise ValueError("Basho ID must be in YYYYMM format")
 
-        if rikishi_id is not None and rikishi_id <= 0:
-            raise ValueError("Rikishi ID must be positive")
+        if not basho_id and not rikishi_id:
+            raise ValueError("Either basho_id or rikishi_id must be provided")
 
         if sort_order and sort_order not in ["asc", "desc"]:
             raise ValueError("Sort order must be either 'asc' or 'desc'")
@@ -584,14 +584,14 @@ class SumoClient:
             ValueError: If parameters are invalid or neither basho_id nor rikishi_id is provided
         """
         # Validate parameters
-        if not basho_id and not rikishi_id:
-            raise ValueError("Either basho_id or rikishi_id must be provided")
+        if rikishi_id is not None and rikishi_id <= 0:
+            raise ValueError("Rikishi ID must be positive")
 
         if basho_id and not (basho_id.isdigit() and len(basho_id) == 6):
             raise ValueError("Basho ID must be in YYYYMM format")
 
-        if rikishi_id is not None and rikishi_id <= 0:
-            raise ValueError("Rikishi ID must be positive")
+        if not basho_id and not rikishi_id:
+            raise ValueError("Either basho_id or rikishi_id must be provided")
 
         if sort_order and sort_order not in ["asc", "desc"]:
             raise ValueError("Sort order must be either 'asc' or 'desc'")
@@ -633,14 +633,14 @@ class SumoClient:
             ValueError: If parameters are invalid or neither basho_id nor rikishi_id is provided
         """
         # Validate parameters
-        if not basho_id and not rikishi_id:
-            raise ValueError("Either basho_id or rikishi_id must be provided")
+        if rikishi_id is not None and rikishi_id <= 0:
+            raise ValueError("Rikishi ID must be positive")
 
         if basho_id and not (basho_id.isdigit() and len(basho_id) == 6):
             raise ValueError("Basho ID must be in YYYYMM format")
 
-        if rikishi_id is not None and rikishi_id <= 0:
-            raise ValueError("Rikishi ID must be positive")
+        if not basho_id and not rikishi_id:
+            raise ValueError("Either basho_id or rikishi_id must be provided")
 
         if sort_order and sort_order not in ["asc", "desc"]:
             raise ValueError("Sort order must be either 'asc' or 'desc'")

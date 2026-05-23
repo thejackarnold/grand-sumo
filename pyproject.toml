@@ -15,8 +15,18 @@ dependencies = [
     "pandas",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=9",
+    "pytest-asyncio>=0.25",
+]
+
 [project.scripts]
 sumo = "grand_sumo.ui.app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/grand_sumo"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
