@@ -482,6 +482,252 @@ updated: {datetime.now().strftime('%Y-%m-%d')}
 
 
 # ---------------------------------------------------------------------------
+# Export 5: Basho Tracker Page
+# ---------------------------------------------------------------------------
+
+def _determine_current_day(client: SumoSyncClient, basho_id: str) -> int:
+    """Scan torikumi days to find the latest day with match data."""
+    for day in range(1, 16):
+        try:
+            torikumi = client.get_torikumi(basho_id, "Makuuchi", day)
+            if not torikumi.matches:
+                return day - 1
+        except Exception:
+            return day - 1
+    return 15
+
+
+def _build_result_grid(
+    rikishi_map: dict,
+    client: SumoSyncClient,
+    basho_id: str,
+    current_day: int,
+) -> None:
+    """Fill result grids for each rikishi from torikumi data."""
+    # Initialise results as unknown
+    for rid in rikishi_map:
+        rikishi_map[rid]["results"] = [""] * 16
+
+    for day in range(1, current_day + 1):
+        torikumi = client.get_torikumi(basho_id, "Makuuchi", day)
+        seen: set[int] = set()
+        for match in torikumi.matches:
+            for rid, side_id in ((match.east_id, match.east_id), (match.west_id, match.west_id)):
+                if rid and rid in rikishi_map:
+                    seen.add(rid)
+                    if match.winner_id is None:
+                        rikishi_map[rid]["results"][day] = "·"
+                    elif match.winner_id == side_id:
+                        rikishi_map[rid]["results"][day] = "W"
+                    elif match.kimarite and "fusen" in match.kimarite.lower():
+                        rikishi_map[rid]["results"][day] = "A"
+                    else:
+                        rikishi_map[rid]["results"][day] = "L"
+
+        # Rikishi not seen on this day were absent
+        for rid in rikishi_map:
+            if rid not in seen:
+                rikishi_map[rid]["results"][day] = "A"
+
+    # Mark future days
+    for rid in rikishi_map:
+        for d in range(current_day + 1, 16):
+            rikishi_map[rid]["results"][d] = "·"
+        # Fill any remaining empty slots as unknown
+        for d in range(1, 16):
+            if not rikishi_map[rid]["results"][d]:
+                rikishi_map[rid]["results"][d] = "·"
+
+
+def _sort_rikishi_list(
+    rikishi_map: dict,
+) -> list[tuple[int, dict]]:
+    """Sort rikishi by rank order (Yokozuna → Maegashira)."""
+    items = [(rid, data) for rid, data in rikishi_map.items()]
+    items.sort(key=lambda x: rank_sort_key(x[1]["rank"]))
+    return items
+
+
+def _render_kkmk(wins: int, losses: int) -> str:
+    """Return KK/MK badge string if applicable."""
+    if wins >= 8:
+        return "**KK**"
+    if losses >= 7:
+        return "**MK**"
+    return ""
+
+
+def export_tracker_page(
+    basho_id: int,
+    vault_path: Path = DEFAULT_VAULT_PATH,
+    progress_callback: Optional[Callable] = None,
+) -> None:
+    """Fetches banzuke + torikumi and writes a live tournament tracker page."""
+    out_dir = vault_path / "Basho"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def _log(msg: str) -> None:
+        if progress_callback:
+            progress_callback("tracker", msg)
+        else:
+            print(msg)
+
+    basho_label = format_basho_id(basho_id)
+    file_path = out_dir / f"{basho_label} Tracker.md"
+
+    with SumoSyncClient() as client:
+        basho = client.get_basho(str(basho_id))
+        banzuke = client.get_banzuke(str(basho_id), "Makuuchi")
+        current_day = _determine_current_day(client, str(basho_id))
+
+        # Build rikishi map
+        rikishi_map: dict = {}
+        for entry in banzuke.east + banzuke.west:
+            rikishi_map[entry.rikishi_id] = {
+                "shikona": entry.shikona_en,
+                "rank": entry.rank,
+                "side": entry.side,
+                "wins": entry.wins,
+                "losses": entry.losses,
+                "absences": entry.absences,
+            }
+
+        _build_result_grid(rikishi_map, client, str(basho_id), current_day)
+
+    # Compute Yusho Race (top 8 by wins)
+    sorted_by_wins = sorted(
+        rikishi_map.items(), key=lambda x: (-x[1]["wins"], x[1]["losses"])
+    )
+    max_wins = sorted_by_wins[0][1]["wins"] if sorted_by_wins else 0
+    yusho_race = sorted_by_wins[:8]
+
+    # Sort by rank for sections
+    sorted_rikishi = _sort_rikishi_list(rikishi_map)
+
+    # Section buckets
+    yokozuna_ozeki: list = []
+    sekiwake_komusubi: list = []
+    maegashira: list = []
+    for rid, data in sorted_rikishi:
+        rank = data["rank"]
+        if rank.startswith("Yokozuna") or rank.startswith("Ozeki"):
+            yokozuna_ozeki.append((rid, data))
+        elif rank.startswith("Sekiwake") or rank.startswith("Komusubi"):
+            sekiwake_komusubi.append((rid, data))
+        else:
+            maegashira.append((rid, data))
+
+    def _gb(entry_wins: int) -> str:
+        diff = max_wins - entry_wins
+        return "—" if diff == 0 else str(diff)
+
+    def _grid_row(rid: int, data: dict) -> str:
+        cells = "  ".join(data["results"][1:])  # days 1-15
+        cells = cells.replace("·", "·")  # keep middle dot
+        return cells
+
+    def _section_table(entries: list) -> str:
+        rows = []
+        for rid, data in entries:
+            safe_name = data["shikona"].replace(" ", "_")
+            link = f"[[Rikishi/{safe_name}|{data['shikona']}]]"
+            grid = _grid_row(rid, data)
+            kkmk = _render_kkmk(data["wins"], data["losses"])
+            sep = f" | {kkmk}" if kkmk else ""
+            gb = _gb(data["wins"])
+            rows.append(
+                f"| {data['rank']} | {link} | {grid} | "
+                f"{data['wins']} | {data['losses']} | {data['absences']} |{sep} | {gb} |"
+            )
+        return "\n".join(rows)
+
+    # Yusho Race table
+    yusho_rows = []
+    for rid, data in yusho_race:
+        safe_name = data["shikona"].replace(" ", "_")
+        link = f"[[Rikishi/{safe_name}|{data['shikona']}]]"
+        yusho_rows.append(
+            f"| {link} | {data['rank']} | {data['wins']} | {data['losses']} | {_gb(data['wins'])} |"
+        )
+    yusho_table = "\n".join(yusho_rows)
+
+    # Day header
+    day_header = "  ".join(str(d) for d in range(1, 16))
+
+    # Venue + dates
+    start = basho.start_date.strftime("%B %d, %Y") if basho.start_date else "TBD"
+    end = basho.end_date.strftime("%B %d, %Y") if basho.end_date else "TBD"
+    location = basho.location or "TBD"
+
+    days_remaining = 15 - current_day
+    day_info = f"Day {current_day} of 15" if current_day > 0 else "Not started"
+    if current_day > 0:
+        day_info += f" — {days_remaining} days remaining"
+
+    md = f"""---
+type: tracker
+basho_id: {basho_id}
+basho_label: {basho_label}
+updated: {datetime.now().strftime('%Y-%m-%d')}
+---
+# {basho_label} — Tournament Tracker
+
+> [!info] {day_info}
+> 📍 {location} · 📅 {start} – {end}
+
+> [!note]- Legend
+> **W** win · **L** loss · **A** absent · **·** upcoming · **KK** kachikoshi (≥ 8W) · **MK** makekoshi (≥ 7L) · **GB** games behind leader
+
+---
+
+## Yusho Race
+
+| Rikishi | Rank | W | L | GB |
+|---------|------|---|---|-----|
+{yusho_table}
+
+---
+
+## Yokozuna · Ozeki
+
+| Rank | Rikishi | {day_header} | W | L | A | | GB |
+|------|---------|{'-' * (len(day_header) + 2)}|---|---|---|--------|-----|
+{_section_table(yokozuna_ozeki)}
+
+---
+
+## Sekiwake · Komusubi
+
+| Rank | Rikishi | {day_header} | W | L | A | | GB |
+|------|---------|{'-' * (len(day_header) + 2)}|---|---|---|--------|-----|
+{_section_table(sekiwake_komusubi)}
+
+---
+
+## Maegashira
+
+| Rank | Rikishi | {day_header} | W | L | A | | GB |
+|------|---------|{'-' * (len(day_header) + 2)}|---|---|---|--------|-----|
+{_section_table(maegashira)}
+
+---
+
+## Special Prize Watchlist
+
+> [!note] Sansho Candidates
+> _Add notes here as the tournament progresses._
+>
+> - **Gino-sho** (Technique):
+> - **Kanto-sho** (Fighting Spirit):
+> - **Shukun-sho** (Outstanding Performance):
+
+## Notes
+"""
+    file_path.write_text(md, encoding="utf-8")
+    _log(f"  ✓ Tracker page written → Basho/{basho_label} Tracker.md")
+
+
+# ---------------------------------------------------------------------------
 # Full Pipeline
 # ---------------------------------------------------------------------------
 
@@ -490,7 +736,7 @@ def run_full_pipeline(
     vault_path: Path = DEFAULT_VAULT_PATH,
     progress_callback: Optional[Callable] = None,
 ) -> None:
-    """Run all 6 export steps in sequence.
+    """Run all 7 export steps in sequence.
 
     Args:
         basho_id: Basho ID in YYYYMM format (int)
@@ -520,5 +766,8 @@ def run_full_pipeline(
 
     _log("pipeline", "=== Step 6: Heya pages ===")
     export_heya_pages(roster_data, vault_path=vault_path, progress_callback=progress_callback)
+
+    _log("pipeline", "=== Step 7: Tournament tracker ===")
+    export_tracker_page(basho_id, vault_path=vault_path, progress_callback=progress_callback)
 
     _log("pipeline", "✅ All exports complete!")

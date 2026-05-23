@@ -10,10 +10,14 @@ from grand_sumo.exporters.obsidian import (
     export_heya_pages,
     export_rikishi_pages,
     export_torikumi_pages,
+    export_tracker_page,
     fetch_rikishi_kimarite,
     format_basho_id,
     rank_sort_key,
     run_full_pipeline,
+    _render_kkmk,
+    _determine_current_day,
+    _sort_rikishi_list,
 )
 
 
@@ -225,6 +229,159 @@ class TestExportHeyaPages:
         assert "type: heya" in content
 
 
+class TestHelpersKkmk:
+    def test_kachikoshi(self):
+        assert _render_kkmk(8, 5) == "**KK**"
+        assert _render_kkmk(10, 3) == "**KK**"
+
+    def test_makekoshi(self):
+        assert _render_kkmk(5, 8) == "**MK**"
+        assert _render_kkmk(2, 12) == "**MK**"
+
+    def test_neither(self):
+        assert _render_kkmk(7, 6) == ""
+        assert _render_kkmk(0, 0) == ""
+
+
+class TestDetermineCurrentDay:
+    def test_with_data(self):
+        client = MagicMock()
+
+        def torikumi_side_effect(basho_id, division, day):
+            t = MagicMock()
+            if day <= 3:
+                t.matches = [MagicMock()]
+            else:
+                t.matches = []
+            return t
+
+        client.get_torikumi.side_effect = torikumi_side_effect
+        assert _determine_current_day(client, "202605") == 3
+
+    def test_no_data(self):
+        client = MagicMock()
+        client.get_torikumi.side_effect = Exception("No data")
+        assert _determine_current_day(client, "202605") == 0
+
+
+class TestSortRikishiList:
+    def test_sorts_by_rank(self):
+        rikishi_map = {
+            1: {"rank": "Maegashira 5 East"},
+            2: {"rank": "Yokozuna East"},
+            3: {"rank": "Ozeki 1 West"},
+        }
+        sorted_items = _sort_rikishi_list(rikishi_map)
+        ranks = [data["rank"] for _, data in sorted_items]
+        assert ranks == ["Yokozuna East", "Ozeki 1 West", "Maegashira 5 East"]
+
+
+class TestExportTrackerPage:
+    def test_writes_file(self, tmp_path):
+        import datetime
+
+        with patch("grand_sumo.exporters.obsidian.SumoSyncClient") as mock_cls:
+            mock_client = MagicMock()
+
+            # Basho mock
+            basho = MagicMock()
+            basho.start_date = datetime.datetime(2026, 5, 10)
+            basho.end_date = datetime.datetime(2026, 5, 24)
+            basho.location = "Tokyo"
+            mock_client.get_basho.return_value = basho
+
+            # Banzuke mock — 4 rikishi across ranks
+            def make_entry(rid, name, rank, side, wins, losses, absences):
+                e = MagicMock()
+                e.rikishi_id = rid
+                e.shikona_en = name
+                e.rank = rank
+                e.side = side
+                e.wins = wins
+                e.losses = losses
+                e.absences = absences
+                return e
+
+            east = [
+                make_entry(1, "Hoshoryu", "Yokozuna 1 East", "East", 0, 2, 12),
+                make_entry(3, "Atamifuji", "Sekiwake 1 East", "East", 7, 6, 0),
+            ]
+            west = [
+                make_entry(2, "Onosato", "Yokozuna 1 West", "West", 0, 0, 14),
+                make_entry(4, "Wakatakakage", "Komusubi 1 East", "West", 10, 3, 0),
+            ]
+            banzuke = MagicMock()
+            banzuke.east = east
+            banzuke.west = west
+            mock_client.get_banzuke.return_value = banzuke
+
+            # Torikumi mock — days 1-2 have data, day 3+ empty
+            def torikumi_side(basho_id, division, day):
+                t = MagicMock()
+                if day == 1:
+                    m1 = MagicMock()
+                    m1.east_id = 1; m1.west_id = 2; m1.winner_id = 1
+                    m1.kimarite = "yorikiri"
+                    m2 = MagicMock()
+                    m2.east_id = 3; m2.west_id = 4; m2.winner_id = 4
+                    m2.kimarite = "oshidashi"
+                    t.matches = [m1, m2]
+                elif day == 2:
+                    m1 = MagicMock()
+                    m1.east_id = 1; m1.west_id = 3; m1.winner_id = 1
+                    m1.kimarite = "yorikiri"
+                    m2 = MagicMock()
+                    m2.east_id = 2; m2.west_id = 4; m2.winner_id = 2
+                    m2.kimarite = "oshidashi"
+                    t.matches = [m1, m2]
+                else:
+                    t.matches = []
+                return t
+
+            mock_client.get_torikumi.side_effect = torikumi_side
+            mock_cls.return_value.__enter__.return_value = mock_client
+
+            export_tracker_page(202605, vault_path=tmp_path)
+
+        md_file = tmp_path / "Basho" / "May 2026 Tracker.md"
+        assert md_file.exists()
+        content = md_file.read_text(encoding="utf-8")
+
+        # Check basic structure
+        assert "type: tracker" in content
+        assert "basho_id: 202605" in content
+        assert "May 2026" in content
+        assert "Tournament Tracker" in content
+        assert "Day 2 of 15" in content  # current_day=2
+        assert "13 days remaining" in content
+        assert "Tokyo" in content
+
+        # Check rikishi names appear
+        assert "Hoshoryu" in content
+        assert "Onosato" in content
+        assert "Atamifuji" in content
+        assert "Wakatakakage" in content
+
+        # Check day grid appears
+        assert "1  2  3" in content  # day header
+        assert "W  W" in content  # Hoshoryu's results
+
+        # Check sections exist
+        assert "Yusho Race" in content
+        assert "Yokozuna · Ozeki" in content
+        assert "Sekiwake · Komusubi" in content
+        assert "Maegashira" in content
+
+        # Check KK badge (Wakatakakage has 10W)
+        assert "**KK**" in content
+        # Check Hoshoryu's absences show in the row (not just legend)
+        assert "12" in content  # absences count
+
+        # Check GB column
+        assert "—" in content  # leader gets dash
+        assert "GB" in content
+
+
 class TestRunFullPipeline:
     def test_runs_all_steps(self, tmp_path):
         with patch("grand_sumo.exporters.obsidian.SumoSyncClient") as mock_cls:
@@ -233,6 +390,11 @@ class TestRunFullPipeline:
             entry = MagicMock()
             entry.rikishi_id = 1
             entry.rank = "M1e"
+            entry.shikona_en = "Test"
+            entry.side = "East"
+            entry.wins = 10
+            entry.losses = 5
+            entry.absences = 0
             banzuke = MagicMock()
             banzuke.east = [entry]
             banzuke.west = []

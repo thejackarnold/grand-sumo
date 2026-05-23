@@ -14,6 +14,7 @@ from grand_sumo.exporters.obsidian import (
     export_heya_pages,
     export_rikishi_pages,
     export_torikumi_pages,
+    export_tracker_page,
     run_full_pipeline,
 )
 from grand_sumo.scrapers.profile import scrape_all_profiles
@@ -81,6 +82,7 @@ class App(tk.Tk):
         basho_frame.pack(fill=tk.X, pady=(0, 6))
         self._add_op_button(basho_frame, "Banzuke", self._run_banzuke)
         self._add_op_button(basho_frame, "Summary", self._run_basho_summary)
+        self._add_op_button(basho_frame, "Tracker", self._run_tracker)
         self._add_op_button(basho_frame, "Torikumi", self._run_torikumi)
 
         # STABLES
@@ -288,6 +290,14 @@ class App(tk.Tk):
             vault_path = self._get_vault_path()
             self._log(f"Exporting basho summary for {basho_id}...")
             export_basho_summary(basho_id, vault_path=vault_path, progress_callback=self._progress_cb)
+        self._run_in_thread(_work)
+
+    def _run_tracker(self) -> None:
+        def _work():
+            basho_id   = self._get_basho_id()
+            vault_path = self._get_vault_path()
+            self._log(f"Exporting tournament tracker for {basho_id}...")
+            export_tracker_page(basho_id, vault_path=vault_path, progress_callback=self._progress_cb)
         self._run_in_thread(_work)
 
     def _run_torikumi(self) -> None:
